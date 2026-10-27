@@ -3,6 +3,7 @@ import type { ContentProviderId } from "../../electron/contentProviders/base/typ
 import { OUTPUT, STARTUP } from "../../types/Channels"
 import { Main } from "../../types/IPC/Main"
 import { checkStartupActions } from "../components/actions/actions"
+import { syncIcsCalendars } from "../components/drawer/calendar/calendars"
 import { getTimeFromInterval } from "../components/helpers/time"
 import { requestMain, requestMainMultiple, sendMain, sendMainMultiple } from "../IPC/main"
 import { cameraManager } from "../media/cameraManager"
@@ -85,11 +86,14 @@ async function startupMain() {
     // }
 
     await wait(2000)
+
     autoBackup()
     await wait(3000)
+
     unsavedUpdater()
     windowFocusListener()
     cameraManager.initializeCameraWarming()
+    syncIcsCalendars()
 
     // CHECK LISTENERS
     // console.log(window.api.getListeners())
@@ -132,12 +136,18 @@ function autoBackup() {
 }
 
 const lastProviderSyncs: Partial<Record<ContentProviderId, number>> = {}
-export function contentProviderSync(startup = false, remainingOnly = false) {
+export async function contentProviderSync(startup = false, remainingOnly = false) {
     const isCloudSyncEnabled = get(cloudSyncData).enabled && get(cloudSyncData).id
 
-    if (startup && isCloudSyncEnabled && !remainingOnly) {
-        setupCloudSync(true)
+    if (isCloudSyncEnabled && !remainingOnly) {
+        setupCloudSync(startup)
         return
+    }
+
+    // on startup, wait until data is loaded
+    if (!Object.keys(get(shows)).length) {
+        await waitUntilValueIsDefined(() => get(loadedState).includes("synced_settings"), 200, 8000) // same await in getStoredData
+        await waitUntilValueIsDefined(() => Object.keys(get(shows)).length, 50, 2000)
     }
 
     const providers = [

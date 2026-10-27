@@ -47,6 +47,18 @@ export class CaptureLifecycle {
         this.activeCaptures.add(id)
         CaptureHelper.updateFramerate(id)
         CaptureHelper.Transmitter.startTransmitting(id)
+
+        // OSR outputs are paint-driven: force a fresh paint so newly enabled consumers get a frame even on static content
+        if (output.osr) {
+            try {
+                const wc = output.window.webContents
+                if (!wc.isPainting()) wc.startPainting()
+                wc.invalidate()
+            } catch {
+                // window tearing down
+            }
+        }
+
         this.updateWebRtcHostState()
         this.updateRtmpState()
 
@@ -197,20 +209,9 @@ export class CaptureLifecycle {
 
         console.info("Capture - stopping: " + id)
 
-        OutputHelper.Lifecycle.releaseOsrCaptureTextures(id)
-        if (!(output as any).follower) this.cleanupListeners(capture.window)
         delete output.captureOptions
         this.updateWebRtcHostState()
         this.updateRtmpState()
-    }
-
-    private static cleanupListeners(window: any) {
-        if (!window || window.isDestroyed()) return
-
-        window.removeAllListeners()
-        if (window.webContents && !window.webContents.isDestroyed?.()) {
-            window.webContents.removeAllListeners()
-        }
     }
 
     private static updateWebRtcHostState() {
@@ -255,13 +256,13 @@ export class CaptureLifecycle {
             if (!o.id) return
 
             if (!o.rtmpData?.streaming) {
-                if (RtmpStreamer.isRunning(o.id)) RtmpStreamer.stop(o.id)
+                RtmpStreamer.stop(o.id)
                 return
             }
 
             const destinations = (o.rtmpData.destinations || []).filter((d) => d.enabled && d.url)
             if (!destinations.length) {
-                if (RtmpStreamer.isRunning(o.id)) RtmpStreamer.stop(o.id)
+                RtmpStreamer.stop(o.id)
                 return
             }
 
@@ -273,7 +274,7 @@ export class CaptureLifecycle {
             if (o.captureOptions?.framerates) o.captureOptions.framerates.rtmp = fps
 
             // destination changes only touch relays; the encode keeps running
-            RtmpStreamer.update(o.id, { width: bounds.width, height: bounds.height, fps, bitrate, enableAudio: isAudioEnabled(), encoder: getRtmpEncoderSetting(o.id) }, destinations)
+            RtmpStreamer.update(o.id, { width: bounds.width, height: bounds.height, fps, bitrate, rateControl: o.rtmpData.rateControl, enableAudio: isAudioEnabled(), encoder: getRtmpEncoderSetting(o.id) }, destinations)
         })
     }
 }

@@ -3,7 +3,6 @@ import { OUTPUT_CONSOLE, getMainWindow, hardwareAccelerationDisabled, isMac, loa
 import { OUTPUT } from "../../../types/Channels"
 import type { Output } from "../../../types/Output"
 import { BlackmagicSender } from "../../blackmagic/BlackmagicSender"
-import { gpuCompositingAvailable, gpuStateSettled } from "../../utils/gpu"
 import { initializeSender } from "../../blackmagic/bmdTalk"
 import { CaptureHelper } from "../../capture/CaptureHelper"
 import { SenderCapture } from "../../capture/SenderCapture"
@@ -11,10 +10,11 @@ import { NdiSender } from "../../ndi/NdiSender"
 import { setDataNDI } from "../../ndi/talk"
 import { OmtSender } from "../../omt/OmtSender"
 import { setDataOMT } from "../../omt/talk"
+import { gpuCompositingAvailable, gpuStateSettled } from "../../utils/gpu"
 import { wait } from "../../utils/helpers"
 import { outputOptions } from "../../utils/windowOptions"
 import { OutputHelper } from "../OutputHelper"
-import { setOutputAlwaysOnTop } from "./OutputAlwaysOnTop"
+import { setOutputAlwaysOnTop, useOutputPanel } from "./OutputAlwaysOnTop"
 import { OutputVisibility } from "./OutputVisibility"
 
 // Tracks timing stages for off-main GPU readback and transmission (in ms)
@@ -69,13 +69,6 @@ export class OutputLifecycle {
                 return
             }
 
-            // if a specific screen is selected, check if it's available
-            if (output.screen) {
-                const displays = screen.getAllDisplays()
-                const targetDisplay = displays.find((d) => d.id.toString() === output.screen)
-                if (!targetDisplay) return
-            }
-
             const targetBounds = OutputVisibility.resolveOutputBounds({ ...output, bounds: output.intendedBounds, id })
             const currentBounds = output.window.getBounds()
             if (JSON.stringify(currentBounds) !== JSON.stringify(targetBounds)) {
@@ -116,8 +109,9 @@ export class OutputLifecycle {
         this.pendingCaptureStart[id] = setTimeout(() => {
             delete this.pendingCaptureStart[id]
 
-            if (!CaptureHelper.Lifecycle || !OutputHelper.getOutput(id)) return // window closed before timeout finished
-            CaptureHelper.Lifecycle.startCapture(id, { ndi: output.ndi || false, omt: output.omt || false, blackmagic: !!output.blackmagic, webrtc: !!output.webrtcData?.streaming, rtmp: !!output.rtmpData?.streaming })
+            const currentOutput = OutputHelper.getOutput(id)
+            if (!CaptureHelper.Lifecycle || !currentOutput || currentOutput.window !== outputWindow) return // window closed or replaced before timeout finished
+            CaptureHelper.Lifecycle.startCapture(id, { ndi: output.ndi || false, omt: output.omt || false, blackmagic: !!output.blackmagic, webrtc: !!currentOutput.webrtcData?.streaming, rtmp: !!currentOutput.rtmpData?.streaming })
         }, 1200)
 
         // NDI
@@ -177,6 +171,8 @@ export class OutputLifecycle {
             if (!extra.boundsLocked) options.resizable = true
         }
 
+        if (useOutputPanel(options.alwaysOnTop, osr)) options.type = "panel"
+
         if (OUTPUT_CONSOLE) options.webPreferences!.devTools = true
         const window: BrowserWindow | null = new BrowserWindow(options)
 
@@ -205,8 +201,8 @@ export class OutputLifecycle {
             return Math.round(d.size.width * sf) === options.width && Math.round(d.size.height * sf) === options.height
         })
         if (matchesDisplay) {
-            options.width! += 1
-            options.height! += 1
+            options.width += 1
+            options.height += 1
         }
     }
 
@@ -378,10 +374,10 @@ export class OutputLifecycle {
 
     private static uncontendedMins(st: { samples: { rtt: number; unc: boolean; seg?: OffMainSegments }[] }): { minRtt: number; seg: OffMainSegments | null; pipeRtt: number } {
         let minRtt = Infinity
-        let consume = Infinity,
-            finish = Infinity,
-            enqueue = Infinity,
-            doneMain = Infinity
+        let consume = Infinity
+        let finish = Infinity
+        let enqueue = Infinity
+        let doneMain = Infinity
         for (const s of st.samples) {
             if (!s.unc) continue
             if (s.rtt < minRtt) minRtt = s.rtt
@@ -499,19 +495,19 @@ export class OutputLifecycle {
         // optional capture stats (FS_CAP_STATS=1), printed once/sec: paints/forwards/completions,
         // drop + coalesce counters, delivery-gap spread, and per-frame hop timings from the worker
         const STATS = !!process.env.FS_CAP_STATS
-        let sPaints = 0,
-            sDropBudget = 0,
-            sDropInterval = 0,
-            sForward = 0,
-            sDone = 0,
-            sReadback = 0,
-            sRttSum = 0,
-            sRttCount = 0
+        let sPaints = 0
+        let sDropBudget = 0
+        let sDropInterval = 0
+        let sForward = 0
+        let sDone = 0
+        let sReadback = 0
+        let sRttSum = 0
+        let sRttCount = 0
         // pending frames released by the full-pipe park watchdog (expected under saturation)
         let sParkExpired = 0
         // paints arriving within 5ms of the previous one (the compositor delivering in clumps)
-        let sBurstPaints = 0,
-            lastPaintTime = 0
+        let sBurstPaints = 0
+        let lastPaintTime = 0
         // inter-arrival gaps between completed frames; the spread (not the mean) is what reads as jitter
         const sGaps: number[] = []
         let lastDoneTime = 0
@@ -532,10 +528,10 @@ export class OutputLifecycle {
                 const admitFps = Math.round(1000 / this.getOsrTargetInterval(id))
                 const ndiFps = OutputHelper.getOutput(id)?.captureOptions?.framerates?.ndi ?? "?"
                 // delivery-evenness stats from the inter-done gaps collected this window
-                let gapMean = 0,
-                    gapStd = 0,
-                    gapP95 = 0,
-                    gapBig = 0
+                let gapMean = 0
+                let gapStd = 0
+                let gapP95 = 0
+                let gapBig = 0
                 if (sGaps.length) {
                     gapMean = sGaps.reduce((a, b) => a + b, 0) / sGaps.length
                     gapStd = Math.sqrt(sGaps.reduce((a, b) => a + (b - gapMean) * (b - gapMean), 0) / sGaps.length)
@@ -862,12 +858,14 @@ export class OutputLifecycle {
         NdiSender.stopSenderNDI(id)
         OmtSender.stopSenderOMT(id)
         BlackmagicSender.stop(id)
+
         // free the addon's reused readback buffers for this output (no-op if the addon/pool isn't present)
         try {
             this.osrCaptureAddon?.releasePool?.(id)
         } catch {
             // ignore
         }
+        this.releaseOsrCaptureTextures(id)
 
         const output = OutputHelper.getOutput(id)
         if (!output) return

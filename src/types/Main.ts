@@ -11,6 +11,14 @@ export interface Config {
     graphicsDevice: string | null
     autoErrorReporting?: boolean
     mediaFolderPath?: string
+
+    // ChurchApps API URLs and credentials
+    churchAppsApiUrl?: string
+    churchAppsAppUrl?: string
+    churchAppsContentUrl?: string
+    churchAppsLessonsUrl?: string
+    churchAppsClientId?: string
+    churchAppsClientSecret?: string
 }
 
 export interface OS {
@@ -287,7 +295,7 @@ export interface Variable {
     animateTowardsResult?: boolean
     animationDuration?: number
     eachNumberOnce?: boolean
-    sets?: { name: string; minValue?: number; maxValue?: number }[]
+    sets?: { name: string; minValue?: number; maxValue?: number; disabled?: boolean }[]
     setName?: string // chosen random set
     setLog?: { name: string; number: string }[]
 
@@ -391,7 +399,6 @@ export type Popups =
     | "confirm"
     | "custom_text"
     | "import"
-    | "songbeamer_import"
     | "export"
     | "show"
     | "delete_show"
@@ -478,6 +485,7 @@ export type Popups =
     | "sync_folders"
     | "node_options"
     | "ai_model_manager"
+    | "ai_chat"
 
 export type DefaultProjectNames = "date" | "today" | "sunday" | "week" | "custom" | "blank"
 

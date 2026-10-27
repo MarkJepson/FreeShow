@@ -1,7 +1,7 @@
 <script lang="ts">
     import { createEventDispatcher, onDestroy, onMount } from "svelte"
     import type { MediaStyle } from "../../../types/Main"
-    import { currentWindow, media } from "../../stores"
+    import { currentWindow, media, playingVideoState } from "../../stores"
     import { enableSubtitle, encodeFilePath, isVideoSupported } from "../helpers/media"
     import { SoftLoopSync } from "./video/softLoop"
     import { clampPlaybackRate, syncVideoToAudio, videoSync } from "./video/videoSync"
@@ -18,6 +18,7 @@
     export let animationStyle = ""
     export let mirror = false
     export let fadingOut = false
+    export let pauseCenter = false
 
     let dispatch = createEventDispatcher()
 
@@ -35,7 +36,7 @@
     $: {
         unsubscribeSync?.()
         const targetPath = syncPath || path
-        if (targetPath && outputId) {
+        if (!pauseCenter && targetPath && outputId) {
             let lastSyncedTime: number | null = null
             unsubscribeSync = videoSync(targetPath, outputId, (data) => {
                 const isSoftLoop = !!(data.softLoop && data.softLoop > 0)
@@ -65,11 +66,28 @@
     let hasLoaded = false
     function loaded() {
         hasLoaded = true
+
+        // Stage "next Slide text" preview
+        if (pauseCenter) {
+            if (video) {
+                const duration = video.duration || 0
+                if (duration > 0) video.currentTime = duration / 2
+                video.pause()
+            }
+            dispatch("loaded", true)
+            return
+        }
+
+        // a mirror can mount while the video is already playing, so start directly at the current playing time, instead of waiting on videoSync
+        const playingKey = `${syncPath || path}_${outputId}`
+        const playingTime = mirror ? $playingVideoState[playingKey]?.currentTime || 0 : 0
+        if (video && playingTime) video.currentTime = playingTime
+
         dispatch("loaded", true)
     }
 
     // ensure that video state matches the store state
-    $: if (video) {
+    $: if (video && !pauseCenter) {
         const isFading = fadingOut || isFadingOutState
         if (!videoData.paused && video.paused && !video.error) {
             video.play().catch((err) => {

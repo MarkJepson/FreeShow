@@ -42,11 +42,16 @@ export const receiver = {
         _update("password", "required", password)
     },
     ERROR: (data: any) => {
-        if (data === "wrongPass") {
+        const key = data?.key || ""
+        if (key === "wrongPass") {
             setError(translate("remote.wrong_password"))
             localStorage.removeItem("password")
             _update("password", "required", true)
-        } else setError(data)
+        } else if (key === "overLimit") {
+            setError(`${translate(`error.${key}`)} (${data?.max})`)
+        } else {
+            setError(key ? translate(`error.${key}`) : data)
+        }
     },
     LANGUAGE: (data: any) => {
         _.dictionary.update((a) => {
@@ -245,6 +250,11 @@ export const receiver = {
         }
     },
     // SCRIPTURE_CHAPTERS and SCRIPTURE_VERSES are handled by GET_SCRIPTURE's bibleUpdate handling
+    SEARCH_SHOWS: (data: any) => {
+        if (data && data.results !== undefined) {
+            _set("showSearchResults", data)
+        }
+    },
     SEARCH_SCRIPTURE: (data: any) => {
         // Store search results for the search component to use
         if (data.searchResults !== undefined) {
